@@ -1,35 +1,15 @@
 import time
 import random
 import board
-import busio
-from datetime import datetime
-from adafruit_is31fl3731.charlieplex import CharliePlex
+from PIL import Image, ImageDraw
+from adafruit_is31fl3731.charlie_bonnet import CharlieBonnet
 
-# ---------- DISPLAY ----------
-i2c = busio.I2C(board.SCL, board.SDA)
-display = CharliePlex(i2c)
-display.brightness = 40   # adjust brightness
+BRIGHTNESS = 64
 
-WIDTH = 16
-HEIGHT = 8
+i2c = board.I2C()
+display = CharlieBonnet(i2c)
 
-buffer = [[0]*WIDTH for _ in range(HEIGHT)]
-
-def clear():
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            buffer[y][x] = 0
-
-def pixel(x,y,v=1):
-    if 0 <= x < WIDTH and 0 <= y < HEIGHT:
-        buffer[y][x] = v
-
-def render():
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            display.pixel(x,y,buffer[y][x])
-
-# ---------- FONT ----------
+# 3x5 compact digits
 digits = {
 "0":["111","101","101","101","111"],
 "1":["010","110","010","010","111"],
@@ -41,82 +21,99 @@ digits = {
 "7":["111","001","001","001","001"],
 "8":["111","101","111","101","111"],
 "9":["111","101","111","001","111"],
-"-":["000","000","111","000","000"]
 }
 
-def draw_digit(d,x,y):
-    pattern = digits[d]
-    for r in range(5):
-        for c in range(3):
-            if pattern[r][c]=="1":
-                pixel(x+c,y+r)
+def draw_digit(draw, d, x):
+    for r,row in enumerate(digits[d]):
+        for c,val in enumerate(row):
+            if val == "1":
+                draw.point((x+c, r+1), fill=BRIGHTNESS)
 
-def draw_colon(on):
-    if on:
-        pixel(7,1)
-        pixel(7,3)
+def draw_colon(draw, visible):
+    if visible:
+        draw.point((7,2), fill=BRIGHTNESS)
+        draw.point((7,4), fill=BRIGHTNESS)
 
-# ---------- CLOCK DISPLAY ----------
-def draw_clock(now):
-    clear()
+def draw_progress(draw, now):
+    # smooth sweep across minute
+    progress = (now.tm_sec + now.tm_sec/60) / 60 * 16
 
-    hour = now.strftime("%H")
-    minute = now.strftime("%M")
-    month = now.strftime("%m")
-    day = now.strftime("%d")
+    full_leds = int(progress)
+    partial = progress - full_leds
 
-    # Time
-    draw_digit(hour[0],0,0)
-    draw_digit(hour[1],4,0)
-    draw_digit(minute[0],9,0)
-    draw_digit(minute[1],13,0)
-    draw_colon(now.second % 2 == 0)
+    # solid LEDs
+    for x in range(full_leds):
+        draw.point((x, 7), fill=BRIGHTNESS)
 
-    # Date
-    draw_digit(month[0],1,3)
-    draw_digit(month[1],5,3)
-    draw_digit("-",8,3)
-    draw_digit(day[0],10,3)
-    draw_digit(day[1],14,3)
+    # fractional leading LED (smooth motion)
+    if full_leds < 16:
+        level = int(BRIGHTNESS * partial)
+        if level > 0:
+            draw.point((full_leds, 7), fill=level)
 
-    render()
+def draw_time(now):
+    image = Image.new("L", (display.width, display.height))
+    draw = ImageDraw.Draw(image)
 
-# ---------- EXPLOSION EFFECT ----------
+    hour = time.strftime("%I", now)
+    minute = time.strftime("%M", now)
+
+    if hour.startswith("0"):
+        hour = hour[1]
+
+    if len(hour) == 1:
+        draw_digit(draw, hour, 2)
+        draw_colon(draw, True)
+        draw_digit(draw, minute[0], 9)
+        draw_digit(draw, minute[1], 13)
+    else:
+        draw_digit(draw, hour[0], 0)
+        draw_digit(draw, hour[1], 4)
+        draw_colon(draw, True)
+        draw_digit(draw, minute[0], 9)
+        draw_digit(draw, minute[1], 13)
+
+    draw_progress(draw, now)
+
+    display.image(image)
+
 def explosion():
-    center_x = WIDTH // 2
-    center_y = HEIGHT // 2
-
     particles = []
+    cx, cy = 8, 4
 
-    for _ in range(40):
+    for _ in range(25):
         particles.append([
-            center_x,
-            center_y,
-            random.uniform(-1.5,1.5),
-            random.uniform(-1.0,1.0)
+            cx, cy,
+            random.uniform(-1.5, 1.5),
+            random.uniform(-1.0, 1.0)
         ])
 
-    for frame in range(25):
-        clear()
+    for _ in range(25):
+        image = Image.new("L", (display.width, display.height))
+        draw = ImageDraw.Draw(image)
 
         for p in particles:
             p[0] += p[2]
             p[1] += p[3]
-            pixel(int(p[0]), int(p[1]))
+            x = int(p[0])
+            y = int(p[1])
+            if 0 <= x < 16 and 0 <= y < 8:
+                draw.point((x, y), fill=BRIGHTNESS)
 
-        render()
-        time.sleep(0.04)
+        display.image(image)
+        time.sleep(0.03)
 
-# ---------- MAIN LOOP ----------
 last_hour = -1
 
 while True:
-    now = datetime.now()
+    now = time.localtime()
 
-    # trigger explosion at top of hour
-    if now.minute == 0 and now.second == 0 and now.hour != last_hour:
+    # hourly explosion
+    if now.tm_min == 0 and now.tm_sec == 0 and now.tm_hour != last_hour:
         explosion()
-        last_hour = now.hour
+        last_hour = now.tm_hour
 
-    draw_clock(now)
-    time.sleep(0.25)
+    draw_time(now)
+
+    # faster refresh for smooth sweep
+    time.sleep(0.1)
