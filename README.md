@@ -1,90 +1,114 @@
-# LED Matrix Clock (Raspberry Pi + Charlieplex Bonnet)
+# Pi Zero 2W LED Matrix Clock
 
-A minimalist, offline-capable LED clock built with a Raspberry Pi and an Adafruit Charlieplex 16×8 LED Matrix Bonnet.
+A standalone LED clock built with a Raspberry Pi Zero 2 W and an Adafruit Charlieplex LED Matrix Bonnet.
 
-Designed to function as a standalone appliance with RTC timekeeping and automatic startup.
+This project displays the time with smooth animations, shows environmental data from a DHT22 sensor, restores time from an RTC when offline, and automatically starts on boot.
 
 ---
 
 ## ✨ Features
 
-- 12-hour time display
-- Clean pixel-style digits for high readability
+- 12-hour clock (no leading zero)
 - Smooth minute progress bar
 - Hourly explosion animation 💥
-- Offline timekeeping via RTC
+- Temperature & humidity display every minute at :30
+- Smooth fade transitions
+- Day/night auto brightness
+- RTC offline timekeeping
 - Auto-start on boot
-- Low CPU usage & flicker-free rendering
+- Low CPU usage & flicker-free display
 
 ---
 
-## 📷 Display Layout
+## 🧰 Hardware Required
 
-9:42
-██████░░░░░░░░
-
-
-- Time centered for readability  
-- Bottom row shows minute progress  
-- Explosion animation at top of hour  
-
----
-
-## 🧰 Required Hardware
-
-### Core Components
-- Raspberry Pi (Zero 2 W recommended)
+### Core
+- Raspberry Pi Zero 2 W
 - MicroSD card (8GB+)
-- 5V power supply
+- 5V power supply (2.5A recommended)
 
 ### Display
-- [Adafruit Charlieplex 16×8 LED Matrix Bonet (cool white)](https://www.adafruit.com/product/3467)
+- Adafruit Charlieplex 16×8 LED Matrix Bonet
 
-### Timekeeping (Recommended)
+### Sensors
 - DS3231 RTC module
-- CR2032 coin cell battery
-
-### Optional
-- STEMMA QT cable (for RTC)
-- Case or enclosure
+- CR2032 battery
+- DHT22 / AM2302 temperature & humidity sensor
 
 ---
 
-## 🔌 Wiring
+## 🔌 Wiring & Pinouts
 
-If the bonnet is mounted on the Pi header → **no wiring required**.
+### Charlieplex Bonnet
+Mount directly onto the Pi header.
 
-### RTC Wiring (DS3231)
+It uses:
+- 5V / 3.3V power
+- GPIO2 (SDA)
+- GPIO3 (SCL)
+- Ground
 
-| RTC | Raspberry Pi |
-|-----|-------------|
-| VCC | 5V (Pin 2) |
-| GND | GND (Pin 6) |
-| SDA | GPIO2 / Pin 3 |
-| SCL | GPIO3 / Pin 5 |
+---
+
+## RTC Wiring (DS3231)
+
+RTC shares the I²C bus with the display.
+
+| RTC | Pi Pin | GPIO |
+|-----|--------|------|
+| VCC | Pin 1 | 3.3V |
+| GND | Pin 6 | GND |
+| SDA | Pin 3 | GPIO2 |
+| SCL | Pin 5 | GPIO3 |
+
+You can split SDA & SCL to share with the bonnet.
+
+---
+
+## DHT22 Wiring
+
+### Recommended pin:
+
+**GPIO4 (Pin 7)**
+
+| Sensor | Pi Pin |
+|--------|--------|
+| VCC | Pin 1 (3.3V) |
+| DATA | Pin 7 |
+| GND | Pin 6 |
+
+⚠️ Bare sensors require a **10k resistor** between DATA and VCC.
 
 ---
 
 ## 🖥️ Software Setup
 
-### 1️⃣ Install Raspberry Pi OS
-Raspberry Pi OS Lite is recommended.
-
----
-
-### 2️⃣ Enable I²C
+### 1️⃣ Update system
 
 ```bash
-sudo raspi-config
+sudo apt update && sudo apt upgrade -y
 ```
-Interface Options → I2C → Enable
 
-Reboot if prompted.
+### 2️⃣ Enable interfaces
+```sudo raspi-config```
 
-### 3️⃣ Install dependencies
-```
-sudo apt update
-sudo apt install python3-pip python3-pil python3-smbus i2c-tools
+## Enable:
+
+```I2C```
+SSH (optional)
+  
+Reboot.
+
+### 3️⃣ Install system dependencies
+```sudo apt install -y \
+python3-pip \
+python3-venv \
+python3-pil \
+i2c-tools \
+gpiod \
+python3-libgpiod \
+libjpeg-dev \
+zlib1g-dev
 ```
 
 ### 4️⃣ Create virtual environment
@@ -93,56 +117,87 @@ python3 -m venv ~/clockenv
 source ~/clockenv/bin/activate
 ```
 
-### 6️⃣ Clone the repository
+### 5️⃣ Install required Python libraries
 ```
-git clone https://github.com/dbzx6r/pdpm-clock.git
-cd YOUR_REPO
+pip install --upgrade pip
+pip install \
+adafruit-blinka \
+adafruit-circuitpython-is31fl3731 \
+adafruit-circuitpython-dht \
+pillow \
+RPi.GPIO
 ```
 
-### 7️⃣ Test the clock
+### ⚠️ Fix: No module named board
+
+If you see:
+
+```ModuleNotFoundError: No module named 'board'```
+
+You are using system Python instead of the virtual environment.
+
+## Run the script with:
 ```
 source ~/clockenv/bin/activate
 python clock.py
 ```
+or:
 
-If everything is correct, the clock will appear.
+```~/clockenv/bin/python clock.py```
 
----
+Verify:
 
-### ⏱️ RTC Setup (DS3231)
+```which python```
 
-Edit boot configuration:
+Should show:
+
+```/home/pi/clockenv/bin/python```
+
+### 🔍 Verify hardware stack
+``` python - <<EOF
+import board, busio
+import adafruit_is31fl3731
+import adafruit_dht
+from PIL import Image
+print("Hardware stack OK")
+EOF
 ```
-sudo nano /boot/firmware/config.txt
+
+### 🔎 Verify I²C devices
+```i2cdetect -y 1 ```
+
+Expected:
+
+```74   ← LED matrix
+68   ← RTC
 ```
+### RTC Setup (Offline Timekeeping)
+
+Enable overlay:
+
+```sudo nano /boot/firmware/config.txt```
 
 Add:
-```
-dtoverlay=i2c-rtc,ds3231
-```
+
+```dtoverlay=i2c-rtc,ds3231```
+
 Reboot:
-```
-sudo reboot
-```
 
-Verify detection:
-```
-i2cdetect -y 1
-```
+```sudo reboot```
 
-You should see:
+Clone & Run
 ```
-68
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
+cd YOUR_REPO
+source ~/clockenv/bin/activate
+python clock.py
 ```
-
----
-
 ### 🚀 Auto-Start on Boot
 
-Create the service:
-```
-sudo nano /etc/systemd/system/ledclock.service
-```
+Create service:
+
+```sudo nano /etc/systemd/system/ledclock.service```
+
 Paste:
 ```
 [Unit]
@@ -151,45 +206,63 @@ After=multi-user.target
 
 [Service]
 Type=simple
-User=YOUR_USERNAME
-WorkingDirectory=/home/**YOUR_USERNAME**
-ExecStart=/home/**YOUR_USERNAME**/clockenv/bin/python /home/**YOUR_USERNAME**/**YOUR_REPO**/clock.py
+User=blackrock
+WorkingDirectory=/home/blackrock/YOUR_REPO
+ExecStart=/home/blackrock/clockenv/bin/python /home/blackrock/YOUR_REPO/clock.py
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
-Enable and start:
+Enable:
 ```
 sudo systemctl daemon-reload
 sudo systemctl enable ledclock
 sudo systemctl start ledclock
-```
----
-
-### 🔄 Updating After Code Changes
-
-Restart the clock service:
-```
+🔄 Restart After Code Changes
 sudo systemctl restart ledclock
 ```
-
-View logs:
+## Logs:
 ```
 journalctl -u ledclock -f
 ```
+---
+
+### 🕒 Display Behavior
+Time  
+smooth minute progress bar  
+hourly explosion animation  
+Every minute at :30  
+temperature (5s)  
+humidity (5s)  
+Sensor failure displays: ```ERR```
+
 
 ---
 
-### 🎛️ Customization
-Adjust brightness
-```
-BRIGHTNESS = 64
-```
-Change refresh smoothness
-``` time.sleep(0.1) ```
+### 🌙 Auto Brightness
+Time	Brightness  
+5 AM – 5 PM	55% Brightness  
+5 PM – 5 AM	30% Brightness
 
-Disable explosion animation
+---
 
-Remove or comment the explosion() call.
+### 🔧 Troubleshooting
+  
+Display not detected
+```i2cdetect -y 1```
+
+Should show ```74```.
+
+RTC not detected
+Check wiring and look for address 68.
+Sensor not reading
+verify pull-up resistor
+check GPIO4 wiring
+ensure good airflow
+  
+### Wi-Fi lost after power loss  
+Create /boot/wpa_supplicant.conf with credentials.
+```“No module named …”```
+Ensure virtual environment is active.
